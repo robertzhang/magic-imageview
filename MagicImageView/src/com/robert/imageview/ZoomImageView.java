@@ -1,5 +1,7 @@
 package com.robert.imageview;
 
+import java.security.acl.LastOwnerException;
+
 import com.robert.wrapper.MagicImageView;
 
 import android.content.Context;
@@ -7,11 +9,14 @@ import android.graphics.Matrix;
 import android.graphics.RectF;
 import android.graphics.drawable.Drawable;
 import android.util.AttributeSet;
+import android.view.GestureDetector;
+import android.view.GestureDetector.OnGestureListener;
 import android.view.MotionEvent;
 import android.view.ScaleGestureDetector;
 import android.view.ScaleGestureDetector.OnScaleGestureListener;
 import android.view.View;
 import android.view.View.OnTouchListener;
+import android.view.ViewConfiguration;
 import android.view.ViewTreeObserver;
 
 public class ZoomImageView extends MagicImageView implements OnScaleGestureListener, OnTouchListener, 
@@ -33,20 +38,217 @@ public class ZoomImageView extends MagicImageView implements OnScaleGestureListe
 	//缩放的手势检测
 	private ScaleGestureDetector mScaleGestureDetector = null;
 	
+	private GestureDetector mGestureDetector = null;
+	
 	private final Matrix mScaleMatrix = new Matrix();
+	
+	private boolean isAutoScale = false;
 	
 	public ZoomImageView(Context context, AttributeSet attrs) {
 		super(context, attrs);
 		super.setScaleType(ScaleType.MATRIX);
 		mScaleGestureDetector = new ScaleGestureDetector(context, this);
+		mGestureDetector = new GestureDetector(context, new SimpleOnGestureListener());
+		mTouchSlop = ViewConfiguration.get(context).getScaledTouchSlop();
 		this.setOnTouchListener(this);
 	}
 
+	private class SimpleOnGestureListener implements OnGestureListener{
+		public boolean onDoubleTap(MotionEvent e){
+			if (isAutoScale == true)
+				return true;
+			
+			float x = e.getX();
+			float y = e.getY();
+			if (getScale() < SCALE_MAX){
+				ZoomImageView.this.postDelayed(new AutoScaleRunnable(SCALE_MAX, x, y), 16);
+				isAutoScale = true;
+			}else{
+				ZoomImageView.this.postDelayed(new AutoScaleRunnable(initScale, x, y), 16);
+				isAutoScale = true;
+			}
+			return true;
+		}
+
+		@Override
+		public boolean onDown(MotionEvent arg0) {
+			// TODO Auto-generated method stub
+			return true;
+		}
+
+		@Override
+		public boolean onFling(MotionEvent arg0, MotionEvent arg1, float arg2,
+				float arg3) {
+			// TODO Auto-generated method stub
+			return false;
+		}
+
+		@Override
+		public void onLongPress(MotionEvent arg0) {
+			// TODO Auto-generated method stub
+			
+		}
+
+		@Override
+		public boolean onScroll(MotionEvent arg0, MotionEvent arg1, float arg2,
+				float arg3) {
+			// TODO Auto-generated method stub
+			return false;
+		}
+
+		@Override
+		public void onShowPress(MotionEvent arg0) {
+			// TODO Auto-generated method stub
+			
+		}
+
+		@Override
+		public boolean onSingleTapUp(MotionEvent arg0) {
+			// TODO Auto-generated method stub
+			return false;
+		}
+	}
+	
+	private class AutoScaleRunnable implements Runnable{
+		static final float BIGGER = 1.05f;
+		static final float SMALLER = 0.95f;
+		
+		private float mTargetScale;
+		private float tempScale;
+		private float x;
+		private float y;
+		
+		public AutoScaleRunnable(float targetScale, float x, float y){
+			this.mTargetScale = targetScale;
+			this.x = x;
+			this.y = y;
+			if (getScale() < mTargetScale){
+				tempScale = BIGGER;
+			}else{
+				tempScale = SMALLER;
+			}
+		}
+		
+		@Override
+		public void run() {
+			mScaleMatrix.postSkew(tempScale, tempScale, x, y);
+			checkBorderAndCenterWhenScale();
+			setImageMatrix(mScaleMatrix);
+			
+			final float currentScale = getScale();
+			if ((tempScale > 1f && currentScale < mTargetScale) || (tempScale < 1f && mTargetScale < currentScale)){
+				ZoomImageView.this.postDelayed(this, 16);
+			}else{
+				final float deltaScale = mTargetScale / currentScale;
+				mScaleMatrix.postScale(deltaScale, deltaScale, x, y);
+				checkBorderAndCenterWhenScale();
+				setImageMatrix(mScaleMatrix);
+				isAutoScale = false;
+			}
+			
+		}
+		
+	}
+	
+	int lastPointerCount = 0;
+	float mLastX = 0, mLastY = 0;
+	boolean isCanDrag = false;
+	boolean isCheckTopAndBottom = false;
+	boolean isCheckLeftAndRight = false;
+	float mTouchSlop = 0;
 	@Override
 	public boolean onTouch(View v, MotionEvent event) {
-		return mScaleGestureDetector.onTouchEvent(event);
+		//return mScaleGestureDetector.onTouchEvent(event);//只能让图片的中心在中间
+		if (mScaleGestureDetector.onTouchEvent(event))
+			return true;
+		
+		float x = 0, y = 0;
+		final int pointerCount = event.getPointerCount();//获取触摸点个数
+		//获取几个触摸点的中心点
+		for (int i = 0; i < pointerCount; i++){
+			x += event.getX();
+			y += event.getY();
+		}
+		x = x / pointerCount;
+		y = y / pointerCount;
+		
+		//触摸点发生变化，重置mlastx，mLasty
+		if (pointerCount != lastPointerCount){
+			isCanDrag = false;
+			mLastX = x;
+			mLastY = y;
+		}
+		
+		lastPointerCount = pointerCount;
+		
+		switch(event.getAction()){
+		case MotionEvent.ACTION_MOVE:
+			float dx = x - mLastX;
+			float dy = y - mLastY;
+			
+			if (!isCanDrag){
+				isCanDrag = isCanDrag(dx, dy);
+			}
+			if (isCanDrag){
+				RectF rectF = getMatrixRectF();
+				if (getDrawable() != null){
+					isCheckLeftAndRight = isCheckTopAndBottom = true;
+					if (rectF.width() < getWidth()){
+						dx = 0;
+						isCheckLeftAndRight = false;
+					}
+					if (rectF.height() < getHeight()){
+						dy = 0;
+						isCheckTopAndBottom = false;
+					}
+					mScaleMatrix.postTranslate(dx, dy);
+					checkMatrixBounds();
+					setImageMatrix(mScaleMatrix);
+				}
+			}
+			mLastX = x;
+			mLastY = y;
+			break;
+		case MotionEvent.ACTION_UP:
+		case MotionEvent.ACTION_CANCEL:
+			lastPointerCount = 0;
+		}
+		
+		return true;
 	}
 
+	/**
+	 * 移动时进行边界判断，判断宽或者高大于屏幕
+	 */
+	private void checkMatrixBounds(){
+		RectF rect = getMatrixRectF();
+		
+		float deltaX = 0, deltaY = 0;
+		final float viewHeight = getHeight();
+		final float viewWidth = getWidth();
+		//判断移动或者缩放后，图片显示是否超出屏幕边界
+		if (rect.top > 0 && isCheckTopAndBottom){
+			deltaY = -rect.top;
+		}
+		if (rect.bottom < viewHeight && isCheckTopAndBottom){
+			deltaY = viewHeight - rect.bottom;
+		}
+		if (rect.left > 0 && isCheckLeftAndRight){
+			deltaX = -rect.left;
+		}
+		if (rect.right < viewWidth && isCheckLeftAndRight){
+			deltaX = viewWidth - rect.right;
+		}
+		mScaleMatrix.postTranslate(deltaX, deltaY);
+	}
+	
+	/**
+	 * 判断是否需要拖动
+	 */
+	private boolean isCanDrag(float dx, float dy){
+		return Math.sqrt((dx * dx) + (dy * dy)) >= mTouchSlop;
+	}
+	
 	@Override
 	public boolean onScale(ScaleGestureDetector detector) {
 		float scale = getScale();
@@ -193,6 +395,8 @@ public class ZoomImageView extends MagicImageView implements OnScaleGestureListe
 			once = false;
 		}
 	}
+	
+	
 
 
 
