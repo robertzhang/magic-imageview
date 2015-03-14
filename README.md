@@ -9,4 +9,4 @@ make a powerful imageview which you could used anywhere
 * MaxScaleImageView中关键的方法是updateScale().用于计算和设置图片的尺寸
 
 ### 2.可缩放的ImageView控件ZoomImageView
-* 该控件也继承自MagicImageView，它主要是用于图片的缩放
+* 该控件也继承自MagicImageView，控件主要是用于图片的缩放，可以用于图片查看的时候，将图片放大来查看细节。图片放大后四个边不会有空隙。另外，双击图片可以放大局部，再双击可以缩小。
